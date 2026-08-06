@@ -1,0 +1,157 @@
+# ═══════════════════════════════════════════════════════════════════
+# E-HealthCard — Stack de Monitoring Complète
+# ═══════════════════════════════════════════════════════════════════
+# Services :
+#   • backend  → API FastAPI (port 8000)
+#   • prometheus → Collecte des métriques (port 9090)
+#   • grafana   → Dashboard de visualisation (port 3000)
+#   • alertmanager → Gestion des alertes (port 9093)
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ─────────────────────────────────────────
+  # Backend FastAPI — API Médicale
+  # ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ehealthcard-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "app=ehealthcard"
+      - "component=backend"
+
+  # ─────────────────────────────────────────
+  # Prometheus — Collecte des métriques
+  # ─────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    container_name: ehealthcard-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+      - "--alertmanager.notification-queue-capacity=10000"
+    networks:
+      - monitoring-network
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    labels:
+      - "app=ehealthcard"
+      - "component=prometheus"
+
+  # ─────────────────────────────────────────
+  # Alertmanager — Gestion des alertes
+  # ─────────────────────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ehealthcard-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    labels:
+      - "app=ehealthcard"
+      - "component=alertmanager"
+
+  # ─────────────────────────────────────────
+  # Grafana — Visualisation & Dashboards
+  # ─────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ehealthcard-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=ehealthcard2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_DOMAIN=localhost
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/ehealthcard_dashboard.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - monitoring-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    labels:
+      - "app=ehealthcard"
+      - "component=grafana"
+
+  # ─────────────────────────────────────────
+  # Node Exporter — Métriques Système (CPU, RAM)
+  # ─────────────────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: ehealthcard-node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    labels:
+      - "app=ehealthcard"
+      - "component=node-exporter"
+
+# ─────────────────────────────────────────
+# Volumes Persistants
+# ─────────────────────────────────────────
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+
+# ─────────────────────────────────────────
+# Réseau dédié
+# ─────────────────────────────────────────
+networks:
+  monitoring-network:
+    driver: bridge
+    name: ehealthcard-network

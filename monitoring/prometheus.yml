@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════════
+# E-HealthCard — Configuration Prometheus
+# Sujet 5 : Carnet de Santé Numérique et Suivi Médical
+# ═══════════════════════════════════════════════════════════════════
+
+global:
+  scrape_interval: 10s          # Collecte des métriques toutes les 10 secondes
+  evaluation_interval: 15s      # Évaluation des règles d'alerte toutes les 15 secondes
+  scrape_timeout: 8s            # Timeout de scrape
+
+  # Labels ajoutés à toutes les métriques collectées
+  external_labels:
+    project: "ehealthcard"
+    environment: "production"
+    subject: "sujet5-carnet-sante"
+
+# ─────────────────────────────────────────
+# Intégration Alertmanager
+# ─────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+      timeout: 10s
+      api_version: v2
+
+# ─────────────────────────────────────────
+# Chargement des règles d'alerte
+# ─────────────────────────────────────────
+rule_files:
+  - "/etc/prometheus/alert_rules.yml"
+
+# ═══════════════════════════════════════════════════════════════════
+# Jobs de scrape (Collecte des métriques)
+# ═══════════════════════════════════════════════════════════════════
+scrape_configs:
+
+  # ─────────────────────────────────────────
+  # 1. Prometheus lui-même (auto-monitoring)
+  # ─────────────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+    metrics_path: /metrics
+
+  # ─────────────────────────────────────────
+  # 2. Backend E-HealthCard FastAPI
+  #    Métriques : RED + métriques métier médicales
+  # ─────────────────────────────────────────
+  - job_name: "ehealthcard-backend"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: "ehealthcard-api"
+          component: "backend"
+    metrics_path: /metrics
+    # Relabeling : ajouter des labels contextuels
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "ehealthcard-backend:8000"
+
+  # ─────────────────────────────────────────
+  # 3. Node Exporter — Métriques système
+  #    CPU, Mémoire, Disque, Réseau
+  # ─────────────────────────────────────────
+  - job_name: "node-exporter"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          service: "system-metrics"
+          component: "node-exporter"
+
+  # ─────────────────────────────────────────
+  # 4. Alertmanager (auto-monitoring)
+  # ─────────────────────────────────────────
+  - job_name: "alertmanager"
+    static_configs:
+      - targets: ["alertmanager:9093"]

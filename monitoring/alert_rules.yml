@@ -1,0 +1,157 @@
+# ═══════════════════════════════════════════════════════════════════
+# E-HealthCard — Règles d'Alerte Prometheus
+# Sujet 5 : Carnet de Santé Numérique — Module 5 Observabilité
+# ═══════════════════════════════════════════════════════════════════
+
+groups:
+
+  # ─────────────────────────────────────────────────────────
+  # Groupe 1 : Alertes critiques sur l'API d'Urgence (ICE)
+  # Cahier des charges : "Alerte immédiate si la latence
+  # d'API d'urgence dépasse 200 ms"
+  # ─────────────────────────────────────────────────────────
+  - name: ehealthcard.emergency_api
+    interval: 15s
+    rules:
+
+      # Alerte P0 : Latence API Urgence > 200ms (p95)
+      - alert: EmergencyAPIHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(health_http_request_duration_seconds_bucket{
+              endpoint="/api/emergency",
+              method="GET"
+            }[2m])) by (le)
+          ) > 0.200
+        for: 1m
+        labels:
+          severity: critical
+          team: ehealthcard
+          module: "urgence"
+        annotations:
+          summary: "🚨 CRITIQUE — Latence API Urgence > 200ms"
+          description: |
+            La latence p95 de l'endpoint /api/emergency est de
+            {{ $value | humanizeDuration }} (seuil : 200ms).
+            Cet endpoint est critique car il fournit la fiche ICE
+            du patient en situation d'urgence médicale.
+          runbook_url: "https://github.com/makhtar2/CarnetDeSante#urgence"
+
+      # Alerte P1 : API Urgence complètement indisponible
+      - alert: EmergencyAPIDown
+        expr: |
+          absent(health_http_requests_total{endpoint="/api/emergency"})
+        for: 2m
+        labels:
+          severity: critical
+          team: ehealthcard
+          module: "urgence"
+        annotations:
+          summary: "🔴 API Urgence hors-ligne"
+          description: "Aucune requête reçue sur /api/emergency depuis 2 minutes."
+
+  # ─────────────────────────────────────────────────────────
+  # Groupe 2 : Alertes sur la Synchronisation des Symptômes
+  # ─────────────────────────────────────────────────────────
+  - name: ehealthcard.symptom_sync
+    interval: 30s
+    rules:
+
+      # Alerte : Taux d'échec de synchro des symptômes > 10%
+      - alert: SymptomSyncHighErrorRate
+        expr: |
+          (
+            sum(rate(health_symptom_sync_total{status="error"}[5m]))
+            /
+            sum(rate(health_symptom_sync_total[5m]))
+          ) > 0.10
+        for: 3m
+        labels:
+          severity: warning
+          team: ehealthcard
+          module: "symptoms"
+        annotations:
+          summary: "⚠️ Taux d'échec synchronisation symptômes > 10%"
+          description: |
+            {{ $value | humanizePercentage }} des synchronisations de symptômes
+            échouent sur les 5 dernières minutes.
+
+      # Alerte : Aucune synchro de symptômes depuis trop longtemps
+      - alert: NoSymptomSyncActivity
+        expr: |
+          absent(health_symptom_sync_total)
+        for: 10m
+        labels:
+          severity: warning
+          team: ehealthcard
+        annotations:
+          summary: "📴 Aucune synchronisation de symptômes depuis 10min"
+          description: "Le compteur health_symptom_sync_total est absent ou nul."
+
+  # ─────────────────────────────────────────────────────────
+  # Groupe 3 : Alertes sur les Accès Non Autorisés
+  # ─────────────────────────────────────────────────────────
+  - name: ehealthcard.security
+    interval: 30s
+    rules:
+
+      # Alerte : Taux de refus d'accès élevé (attaques potentielles)
+      - alert: HighUnauthorizedAccessRate
+        expr: |
+          (
+            sum(rate(health_auth_requests_total{status="rejected"}[5m]))
+            /
+            sum(rate(health_auth_requests_total[5m]))
+          ) > 0.20
+        for: 2m
+        labels:
+          severity: warning
+          team: ehealthcard
+          module: "security"
+        annotations:
+          summary: "🔐 Taux d'accès refusés anormalement élevé (>20%)"
+          description: |
+            {{ $value | humanizePercentage }} des requêtes vers les endpoints
+            médicaux protégés sont refusées. Vérifier les tentatives d'intrusion.
+
+  # ─────────────────────────────────────────────────────────
+  # Groupe 4 : Alertes générales disponibilité API
+  # ─────────────────────────────────────────────────────────
+  - name: ehealthcard.api_health
+    interval: 30s
+    rules:
+
+      # Alerte : Taux d'erreurs HTTP 5xx global > 5%
+      - alert: HighHTTPErrorRate5xx
+        expr: |
+          (
+            sum(rate(health_http_requests_total{status_code=~"5.."}[5m]))
+            /
+            sum(rate(health_http_requests_total[5m]))
+          ) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          team: ehealthcard
+        annotations:
+          summary: "🔴 Taux d'erreurs 5xx > 5%"
+          description: |
+            Le taux d'erreurs serveur (5xx) est de {{ $value | humanizePercentage }}
+            sur les 5 dernières minutes.
+
+      # Alerte : Temps de chiffrement médical anormalement long
+      - alert: SlowMedicalEncryption
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(health_api_encryption_duration_seconds_bucket[5m])) by (le, operation)
+          ) > 0.100
+        for: 5m
+        labels:
+          severity: warning
+          team: ehealthcard
+          module: "encryption"
+        annotations:
+          summary: "🔒 Chiffrement médical lent (p99 > 100ms)"
+          description: |
+            Le chiffrement des payloads médicaux prend {{ $value | humanizeDuration }}
+            au p99 (seuil : 100ms). Risque de dégradation UX.

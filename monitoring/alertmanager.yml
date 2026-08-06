@@ -1,0 +1,94 @@
+# ═══════════════════════════════════════════════════════════════════
+# E-HealthCard — Configuration Alertmanager
+# Gestion et routage des alertes Prometheus
+# ═══════════════════════════════════════════════════════════════════
+
+global:
+  # Délai avant de remettre en route une alerte résolue
+  resolve_timeout: 5m
+  # Headers HTTP pour les webhooks
+  http_config:
+    follow_redirects: true
+
+# ─────────────────────────────────────────
+# Templates de notification
+# ─────────────────────────────────────────
+templates:
+  - "/etc/alertmanager/templates/*.tmpl"
+
+# ─────────────────────────────────────────
+# Route principale des alertes
+# ─────────────────────────────────────────
+route:
+  # Récepteur par défaut
+  receiver: "ehealthcard-default"
+  
+  # Grouper les alertes par service et sévérité
+  group_by: ["alertname", "severity", "module"]
+  
+  # Attendre 30s pour grouper plusieurs alertes similaires
+  group_wait: 30s
+  
+  # Intervalle entre deux groupes d'alertes
+  group_interval: 5m
+  
+  # Répéter une alerte non résolue toutes les 3h
+  repeat_interval: 3h
+
+  # ─── Sous-routes par sévérité ───────────────
+  routes:
+    # Alertes CRITIQUES : notification immédiate
+    - match:
+        severity: critical
+      receiver: "ehealthcard-critical"
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: false
+
+    # Alertes WARNING : groupées, moins urgentes
+    - match:
+        severity: warning
+      receiver: "ehealthcard-warning"
+      group_wait: 1m
+      repeat_interval: 6h
+
+# ─────────────────────────────────────────
+# Récepteurs (Receivers)
+# ─────────────────────────────────────────
+receivers:
+
+  # Récepteur par défaut (log vers webhook local)
+  - name: "ehealthcard-default"
+    webhook_configs:
+      - url: "http://backend:8000/api/alerts/webhook"
+        send_resolved: true
+        http_config:
+          follow_redirects: true
+        max_alerts: 10
+
+  # Alertes critiques (ex: latence urgence > 200ms)
+  - name: "ehealthcard-critical"
+    webhook_configs:
+      - url: "http://backend:8000/api/alerts/webhook"
+        send_resolved: true
+        http_config:
+          follow_redirects: true
+        max_alerts: 5
+
+  # Alertes warnings
+  - name: "ehealthcard-warning"
+    webhook_configs:
+      - url: "http://backend:8000/api/alerts/webhook"
+        send_resolved: true
+        max_alerts: 10
+
+# ─────────────────────────────────────────
+# Silences et inhibitions
+# ─────────────────────────────────────────
+inhibit_rules:
+  # Inhiber les alertes WARNING si une alerte CRITICAL existe sur le même module
+  - source_match:
+      severity: "critical"
+    target_match:
+      severity: "warning"
+    equal: ["alertname", "module"]
